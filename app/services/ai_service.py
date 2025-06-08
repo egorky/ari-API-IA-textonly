@@ -21,6 +21,7 @@ from langchain.agents.output_parsers.openai_functions import OpenAIFunctionsAgen
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
 
+import re # For JavaScript processing in prompts
 from app.core.config import settings
 from app.services.redis_service import get_redis_client
 from app.services.tool_executor import execute_api_tool
@@ -29,7 +30,66 @@ from sqlalchemy.orm import Session # For type hinting db session
 
 logger = logging.getLogger(__name__)
 
+# Attempt to import MiniRacer and set up context for JavaScript processing
+PY_MINI_RACER_AVAILABLE = False
+JS_CONTEXT = None
+try:
+    from py_mini_racer import MiniRacer
+    JS_CONTEXT = MiniRacer()
+    PY_MINI_RACER_AVAILABLE = True
+    logger.info("py_mini_racer imported successfully. JavaScript processing in prompts is enabled.")
+except ImportError:
+    logger.warning("py_mini_racer not found. JavaScript processing in prompts will be disabled. Please install it if needed.")
+except Exception as e:
+    logger.error(f"Error initializing MiniRacer: {e}. JavaScript processing in prompts will be disabled.")
+    JS_CONTEXT = None # Ensure context is None if initialization failed
+    PY_MINI_RACER_AVAILABLE = False
+
+
 DEFAULT_SYSTEM_PROMPT_FOR_AGENT = "You are a helpful assistant. You have access to the following tools. Use them when appropriate."
+
+# Function to process JavaScript snippets in prompts
+def process_prompt_javascript(prompt_content: str) -> str:
+    if not PY_MINI_RACER_AVAILABLE or not prompt_content or not JS_CONTEXT:
+        if not PY_MINI_RACER_AVAILABLE and "{{" in prompt_content: # Log only if JS snippets are present but processor is unavailable
+             logger.warning("JavaScript snippets found in prompt, but py_mini_racer is not available or failed to initialize. Snippets will not be processed.")
+        return prompt_content
+
+    processed_content = prompt_content
+    # Using finditer to handle multiple occurrences and replacements correctly
+    # Find non-overlapping matches
+    matches = list(re.finditer(r"\{\{(.*?)\}\}", prompt_content))
+
+    # Iterate in reverse to maintain correct indices after replacements
+    for match in reversed(matches):
+        original_snippet_with_braces = match.group(0)
+        js_code = match.group(1).strip()
+
+        if not js_code:
+            logger.warning(f"Empty JavaScript snippet found: {original_snippet_with_braces}. Skipping.")
+            continue
+
+        try:
+            logger.debug(f"Attempting to execute JS snippet: {js_code}")
+            js_result = JS_CONTEXT.eval(js_code)
+            result_str = str(js_result) # Ensure result is a string
+
+            # Replace the specific match in the current state of processed_content
+            # Re.sub can be tricky with overlapping matches or multiple replaces in one go on original string.
+            # Manual replacement on `processed_content` using match start/end ensures accuracy.
+            start_index, end_index = match.span()
+            processed_content = processed_content[:start_index] + result_str + processed_content[end_index:]
+
+            logger.debug(f"Successfully executed JS: '{js_code}', result: '{result_str}'. Snippet '{original_snippet_with_braces}' replaced.")
+        except Exception as e:
+            # In case of an error executing a specific snippet, log it and leave the original snippet in place.
+            logger.error(f"Error executing JS snippet '{original_snippet_with_braces}': {e}. Snippet will remain unprocessed.")
+            # Optionally, replace with an error marker:
+            # processed_content = processed_content[:start_index] + "[JS Execution Error]" + processed_content[end_index:]
+
+    if prompt_content != processed_content:
+        logger.info("JavaScript snippets processed in prompt content.")
+    return processed_content
 
 def load_langchain_tools_from_db(db: Session) -> List[LangchainTool]:
     db_tools = crud.get_tools(db=db, limit=100) # Pass db session to crud function
@@ -88,15 +148,17 @@ async def get_ai_response(
     session_id: str,
     db: Session, # Added db session
     model_preference: str = None,
-    prompt_name: Optional[str] = None # Name of the prompt to fetch from DB
+    prompt_name: Optional[str] = None, # Name of the prompt to fetch from DB
+    prompt_content_override: Optional[str] = None # Allow overriding prompt content directly
 ):
-    logger.info(f"AI Service call: session_id='{session_id}', model_preference='{model_preference}', prompt_name='{prompt_name}', input='{text_input[:50]}...'")
+    logger.info(f"AI Service call: session_id='{session_id}', model_preference='{model_preference}', prompt_name='{prompt_name}', override_used={'Yes' if prompt_content_override else 'No'}, input='{text_input[:50]}...'")
 
     chosen_model_name = model_preference if model_preference else settings.DEFAULT_AI_MODEL
     logger.info(f"Chosen AI model type: {chosen_model_name}")
 
     llm = None
     is_openai_model = False
+    is_gemini_model = False # New flag for Gemini
     if chosen_model_name.lower() == 'openai':
         if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY == 'your_openai_api_key_here':
             logger.error("OpenAI API key is not configured.")
@@ -113,8 +175,10 @@ async def get_ai_response(
             logger.error("Gemini API key is not configured.")
             return "Error: Gemini API key not configured."
         try:
-            llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=settings.GEMINI_API_KEY, convert_system_message_to_human=True, temperature=0)
-            logger.info("Using Google Gemini model.")
+            # Using the new GEMINI_MODEL_NAME from settings
+            llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL_NAME, google_api_key=settings.GEMINI_API_KEY, convert_system_message_to_human=True, temperature=0)
+            is_gemini_model = True # Set the flag
+            logger.info(f"Using Google Gemini model: {settings.GEMINI_MODEL_NAME}.")
         except Exception as e:
             logger.error(f"Failed to initialize Gemini LLM: {e}", exc_info=True)
             return f"Error: Could not initialize Gemini model. {str(e)}"
@@ -153,33 +217,96 @@ async def get_ai_response(
             return f"Error: Could not setup Redis for memory. {str(e)}"
 
 
-    system_prompt_content = DEFAULT_SYSTEM_PROMPT_FOR_AGENT
-    if prompt_name:
+    system_prompt_content = DEFAULT_SYSTEM_PROMPT_FOR_AGENT # Default
+    prompt_source_log = "default agent prompt"
+
+    if prompt_content_override is not None:
+        system_prompt_content = prompt_content_override
+        prompt_source_log = "direct content override"
+        logger.info(f"Using prompt content directly from override. Original length: {len(system_prompt_content)}")
+    elif prompt_name:
         db_prompt_obj = crud.get_prompt_by_name(db, name=prompt_name)
         if db_prompt_obj:
             system_prompt_content = db_prompt_obj.content
-            logger.info(f"Using prompt '{prompt_name}' from database.")
+            prompt_source_log = f"database (prompt name: '{prompt_name}')"
+            logger.info(f"Using prompt '{prompt_name}' from database. Original length: {len(system_prompt_content)}")
         else:
-            logger.warning(f"Prompt '{prompt_name}' not found. Using default agent prompt.")
+            logger.warning(f"Prompt '{prompt_name}' not found. Falling back to default agent prompt. Original length: {len(system_prompt_content)}")
+            # system_prompt_content remains DEFAULT_SYSTEM_PROMPT_FOR_AGENT
+    else: # No override, no prompt_name, using default
+        logger.info(f"Using default agent prompt. Original length: {len(system_prompt_content)}")
+        # system_prompt_content remains DEFAULT_SYSTEM_PROMPT_FOR_AGENT
+
+    # Process JavaScript in the system prompt content (whether from override, DB, or default)
+    original_len = len(system_prompt_content)
+    processed_system_prompt_content = process_prompt_javascript(system_prompt_content) # Use a new variable name
+
+    if len(processed_system_prompt_content) != original_len:
+        logger.info(f"System prompt content (from {prompt_source_log}) after JS processing. New length: {len(processed_system_prompt_content)}")
+    elif "{{" in system_prompt_content and not PY_MINI_RACER_AVAILABLE:
+        logger.info(f"Prompt (from {prompt_source_log}) contains JS snippets, but JS processing is disabled or unavailable.")
+    else:
+        logger.info(f"No JavaScript snippets processed in system prompt (from {prompt_source_log}), or no change in length.")
+
+    system_prompt_content = processed_system_prompt_content # Assign back after logging original state
+
+
 
     # For OpenAI Functions agent, tools are passed directly, not described in prompt this way usually.
     # The agent creation process binds tools to the LLM.
     # The system prompt should guide the LLM's behavior and persona.
+
+    agent_executor_instance = None # Define a common variable for the executor
+
     if is_openai_model and tools:
-        # OpenAI Functions Agent specific prompt structure
+        logger.info(f"Creating OpenAI Functions Agent with {len(tools)} tools.")
         prompt_template = ChatPromptTemplate.from_messages([
             SystemMessage(content=system_prompt_content),
             MessagesPlaceholder(variable_name="chat_history"),
-            HumanMessage(content="{input}"), # Langchain uses {input} by default for user query
-            MessagesPlaceholder(variable_name="agent_scratchpad"), # Crucial for agent execution steps
+            HumanMessage(content="{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         agent = create_openai_functions_agent(llm, tools, prompt_template)
-        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=settings.DEBUG_MODE, handle_parsing_errors=True)
-        logger.info("OpenAI Functions Agent with tools created.")
-    else: # Fallback for Gemini or if no tools, or if OpenAI model but no tools
-        logger.info(f"Using basic ConversationChain (Model: {chosen_model_name}, Tools: {len(tools)}).")
+        agent_executor_instance = AgentExecutor(agent=agent, tools=tools, verbose=settings.DEBUG_MODE, handle_parsing_errors=True, return_intermediate_steps=False)
+        logger.info("OpenAI Functions Agent with tools created successfully.")
+    elif is_gemini_model and tools:
+        logger.info(f"Creating Gemini Agent with {len(tools)} tools, using model {settings.GEMINI_MODEL_NAME}.")
+        # Bind tools to the Gemini LLM
+        llm_with_tools = llm.bind_tools(tools)
+
+        # Define the prompt structure for Gemini with tools
+        # This structure is similar to OpenAI's function agent prompt
+        prompt_template = ChatPromptTemplate.from_messages([
+            SystemMessage(content=system_prompt_content),
+            MessagesPlaceholder(variable_name="chat_history"),
+            HumanMessage(content="{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"), # For agent execution steps
+        ])
+
+        # Using OpenAIFunctionsAgentOutputParser as Gemini's tool_calls are similar.
+        # If issues arise, explore other parsers like Langchain's XMLAgentOutputParser or a custom one for Gemini.
+        # For now, assuming Gemini's output when tools are bound is compatible enough.
+        # LangChain's documentation suggests that `llm.bind_tools(tools)` for Gemini
+        # should produce `AIMessage(tool_calls=[...])` which is what OpenAIFunctionsAgentOutputParser expects.
+        output_parser = OpenAIFunctionsAgentOutputParser()
+
+        # Construct the agent runnable sequence
+        # The agent_scratchpad is populated by formatting intermediate steps (tool calls and tool observations)
+        # into a sequence of AIMessage and ToolMessage objects.
+        # format_to_openai_function_messages is a common utility for this.
+        agent_runnable = prompt_template | llm_with_tools | output_parser
+
+        agent_executor_instance = AgentExecutor(
+            agent=agent_runnable,
+            tools=tools,
+            verbose=settings.DEBUG_MODE,
+            handle_parsing_errors=True, # Crucial for robustness
+            return_intermediate_steps=False # Set to True if you need to inspect intermediate steps
+        )
+        logger.info(f"Gemini Agent with tools created successfully using {settings.GEMINI_MODEL_NAME}.")
+    else: # Fallback for Gemini without tools, or OpenAI without tools, or any other model
+        logger.info(f"Using basic ConversationChain (Model: {chosen_model_name}, Tools available: {len(tools)}, Tools used: No).")
         # Simpler prompt for basic ConversationChain
-        # This template needs 'history' and 'input'
         conv_prompt_template_str = system_prompt_content
         if not ("{history}" in conv_prompt_template_str and "{input}" in conv_prompt_template_str):
             logger.warning("System prompt not suitable for ConversationChain (missing {history}/{input}). Using default.")
@@ -193,28 +320,33 @@ async def get_ai_response(
             chat_memory=message_history, # Use the same message_history store
             return_messages=True
         )
-        agent_executor = ConversationChain(llm=llm, memory=memory_for_conv_chain, prompt=prompt_template, verbose=settings.DEBUG_MODE)
+        # For ConversationChain, agent_executor_instance remains the chain itself
+        agent_executor_instance = ConversationChain(llm=llm, memory=memory_for_conv_chain, prompt=prompt_template, verbose=settings.DEBUG_MODE)
         logger.info("Basic ConversationChain created.")
 
-    # Setup RunnableWithMessageHistory for managing history with the chosen agent_executor
+    # Setup RunnableWithMessageHistory for managing history with the chosen agent_executor_instance
+    # Determine history_messages_key based on whether an AgentExecutor (with chat_history) or ConversationChain (with history) is used.
+    # AgentExecutor (for OpenAI with tools, and Gemini with tools) uses "chat_history" in its prompt.
+    # ConversationChain uses "history" in its prompt.
+    current_history_key = "chat_history" if isinstance(agent_executor_instance, AgentExecutor) else "history"
+    logger.info(f"RunnableWithMessageHistory will use history_messages_key='{current_history_key}'")
+
     chain_with_history = RunnableWithMessageHistory(
-        agent_executor,
-        # get_session_history factory function
-        lambda session_id_for_history: message_history, # Return the single message_history instance
+        agent_executor_instance,
+        lambda session_id_for_history: message_history,
         input_messages_key="input",
-        history_messages_key="chat_history", # Ensure this matches placeholder in agent prompt if used
-        # Output key for AgentExecutor is 'output', for ConversationChain it's 'response'
-        output_messages_key="output" if isinstance(agent_executor, AgentExecutor) else "response"
+        history_messages_key=current_history_key,
+        output_messages_key="output" if isinstance(agent_executor_instance, AgentExecutor) else "response"
     )
 
     try:
         logger.info(f"Invoking chain_with_history for session {session_id} with input: '{text_input}'")
         result = await chain_with_history.ainvoke(
-            {"input": text_input}, # Input for the agent/chain
-            config={"configurable": {"session_id": session_id}} # Config for RunnableWithMessageHistory
+            {"input": text_input},
+            config={"configurable": {"session_id": session_id}}
         )
 
-        ai_response = result.get("output") if isinstance(agent_executor, AgentExecutor) else result.get("response")
+        ai_response = result.get("output") if isinstance(agent_executor_instance, AgentExecutor) else result.get("response")
         if ai_response is None:
             logger.error(f"AI agent/chain returned None or missing expected output key. Result: {result}")
             ai_response = "Error: AI did not produce a valid response."
@@ -298,6 +430,7 @@ if __name__ == '__main__':
     settings.REDIS_PORT = int(os.getenv("REDIS_PORT", str(settings.REDIS_PORT)))
     settings.DATABASE_URL = os.getenv("DATABASE_URL", settings.DATABASE_URL)
     settings.OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo-0125")
+    settings.GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-pro") # Load Gemini model name
     settings.DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
 
     # For standalone testing, ensure DB engine is configured with potentially loaded DATABASE_URL

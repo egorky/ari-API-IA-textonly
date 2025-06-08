@@ -2,6 +2,7 @@ import httpx
 import json
 import logging
 from typing import Dict, Any, Optional
+from jsonschema import validate, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -28,29 +29,49 @@ async def execute_api_tool(
     request_params = {}
     request_json_data = None
 
+    parsed_input: Any # Define type for parsed_input
+
     # Try to parse tool_input if it's a string and looks like JSON
     if isinstance(tool_input, str):
         try:
             parsed_input = json.loads(tool_input)
         except json.JSONDecodeError:
-            if parameters_schema and parameters_schema.get("type") == "object" and len(parameters_schema.get("properties", {})) > 1:
-                logger.warning(f"Tool input '{tool_input}' for tool '{tool_name_for_log}' is not JSON but multiple parameters are expected.")
-                required_params = parameters_schema.get("required", [])
-                props = parameters_schema.get("properties", {})
-                if len(required_params) == 1 and props.get(required_params[0], {}).get("type") == "string":
-                    parsed_input = {required_params[0]: tool_input}
-                    logger.debug(f"Assigned string input to single required string param: {required_params[0]}")
-                else:
-                    return f"Error: Input '{tool_input}' for tool '{tool_name_for_log}' is not valid JSON for the expected parameters."
-            else:
-                parsed_input = tool_input
-                logger.debug(f"Tool input for '{tool_name_for_log}' is a non-JSON string: '{tool_input}'. Using as is or based on schema.")
+            # This specific heuristic might be too complex or better handled by schema validation itself if schema expects an object.
+            # If schema expects a string, then this non-JSON string is the value.
+            # Let's simplify and let validation catch issues if the schema expects an object/specific types.
+            parsed_input = tool_input # Keep as string if not parsable as JSON
+            logger.debug(f"Tool input for '{tool_name_for_log}' is a non-JSON string: '{tool_input}'. Will be validated against schema.")
     elif isinstance(tool_input, dict):
         parsed_input = tool_input
     else:
+        # For non-string, non-dict types (e.g. numbers, booleans directly from LLM if that happens)
         parsed_input = tool_input
-        logger.debug(f"Tool input for '{tool_name_for_log}' is not string or dict: {type(tool_input)}. Using as is.")
+        logger.debug(f"Tool input for '{tool_name_for_log}' is of type {type(tool_input)}. Using as is for validation.")
 
+    # Validate parsed_input against parameters_schema if schema is provided
+    if parameters_schema and isinstance(parameters_schema, dict) and parameters_schema: # Ensure schema is a non-empty dict
+        try:
+            # Ensure that if the schema type is "object", the instance is a dict.
+            # If schema type is "string", instance should be string, etc.
+            # jsonschema handles this, but LLMs might pass a string for an object with one param.
+            # Example: tool expects {"location": "london"}, LLM might send "london".
+            # The schema should define the expected structure. If schema expects an object, parsed_input should be a dict.
+            # The previous logic for auto-wrapping a single string input into a dict for a single-param object
+            # has been removed in favor of stricter schema validation.
+            # If the schema expects {"type": "object", "properties": {"param_name": {"type": "string"}}}
+            # and parsed_input is "value", validation will fail.
+            # If schema expects {"type": "string"}, and parsed_input is "value", it will pass.
+
+            validate(instance=parsed_input, schema=parameters_schema)
+            logger.info(f"Tool input for '{tool_name_for_log}' validated successfully against schema.")
+        except ValidationError as e:
+            error_message = f"Error: Invalid parameters for tool '{tool_name_for_log}'. Details: {e.message}"
+            logger.error(f"Tool input validation error for tool '{tool_name_for_log}': {e.message} (Path: {list(e.path)}, Validator: {e.validator})")
+            return error_message
+        except Exception as e: # Catch other jsonschema errors, though ValidationError is primary
+            error_message = f"Error: Schema validation failed for tool '{tool_name_for_log}'. Details: {str(e)}"
+            logger.error(f"Unexpected schema validation error for tool '{tool_name_for_log}': {str(e)}", exc_info=True)
+            return error_message
 
     if method == "GET":
         if isinstance(parsed_input, dict):

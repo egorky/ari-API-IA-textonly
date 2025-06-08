@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Prompt Tester - ARI AI Interface{% endblock %}
+
+{% block content %}
+<h2>Prompt Tester</h2>
+<p>Test prompts with different models and inputs directly from the UI.</p>
+
+<div class="row">
+    <div class="col-md-7">
+        <form id="promptTestForm">
+            <div class="mb-3">
+                <label for="promptSelector" class="form-label">Load Existing Prompt (Optional):</label>
+                <select id="promptSelector" class="form-select">
+                    <option value="">-- Select a Prompt or Use Custom Below --</option>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label for="promptContent" class="form-label">Prompt Content:</label>
+                <textarea id="promptContent" class="form-control" rows="10" placeholder="Enter your system prompt here, or load an existing one. You can use {{ your_javascript_here() }} for dynamic content."></textarea>
+            </div>
+
+            <div class="mb-3">
+                <label for="userInput" class="form-label">User Input:</label>
+                <input type="text" id="userInput" class="form-control" placeholder="Enter the user's message or query.">
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="aiModel" class="form-label">AI Model:</label>
+                    <select id="aiModel" class="form-select">
+                        <option value="openai" selected>OpenAI</option>
+                        <option value="gemini">Gemini</option>
+                        <!-- Add other models if supported in the future -->
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="sessionId" class="form-label">Session ID (Optional):</label>
+                    <input type="text" id="sessionId" class="form-control" placeholder="Leave blank for new session.">
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Ejecutar Prueba</button>
+        </form>
+    </div>
+
+    <div class="col-md-5">
+        <div class="card">
+            <div class="card-header">
+                AI Response
+            </div>
+            <div class="card-body">
+                <pre id="responseArea" style="white-space: pre-wrap; word-wrap: break-word;">The AI's response will appear here...</pre>
+            </div>
+            <div class="card-footer">
+                <small id="sessionInfo">Session ID used: N/A</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const promptSelector = document.getElementById('promptSelector');
+    const promptContentEl = document.getElementById('promptContent');
+    const userInputEl = document.getElementById('userInput');
+    const aiModelEl = document.getElementById('aiModel');
+    const sessionIdEl = document.getElementById('sessionId');
+    const responseAreaEl = document.getElementById('responseArea');
+    const sessionInfoEl = document.getElementById('sessionInfo');
+    const promptTestForm = document.getElementById('promptTestForm');
+
+    // Fetch and populate prompts list
+    fetch("{{ request.app.url_path_for('list_all_prompts') }}")
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error ${response.status} while fetching prompts.`);
+            }
+            return response.json();
+        })
+        .then(prompts => {
+            prompts.forEach(prompt => {
+                const option = document.createElement('option');
+                option.value = prompt.id;
+                option.textContent = prompt.name;
+                promptSelector.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading prompts:', error);
+            promptContentEl.placeholder = 'Could not load existing prompts. Please enter custom prompt content.';
+        });
+
+    // Load prompt content when selector changes
+    promptSelector.addEventListener('change', function() {
+        const promptId = this.value;
+        if (promptId) {
+            fetch(`{{ request.app.url_path_for('get_prompt_content_by_id', prompt_id='0') }}`.replace('0', promptId)) // Bit of a hack for URL generation
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    promptContentEl.value = data.content || '';
+                })
+                .catch(error => {
+                    console.error('Error fetching prompt content:', error);
+                    responseAreaEl.textContent = `Error fetching prompt content: ${error.message}`;
+                });
+        } else {
+            promptContentEl.value = ''; // Clear if default option selected
+        }
+    });
+
+    // Handle form submission
+    promptTestForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+        responseAreaEl.textContent = 'Processing...';
+        sessionInfoEl.textContent = 'Session ID used: N/A';
+
+        const payload = {
+            prompt_content: promptContentEl.value,
+            user_input: userInputEl.value,
+            ai_model: aiModelEl.value,
+            session_id: sessionIdEl.value || null // Send null if empty so backend generates one
+        };
+
+        fetch("{{ request.app.url_path_for('execute_prompt_test') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                // CSRF token might be needed if not using Depends(get_current_username) for session-based auth
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => {
+            if (!response.ok) {
+                 return response.json().then(errData => {
+                    throw new Error(`HTTP error ${response.status}: ${errData.detail || 'Unknown error'}`);
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            responseAreaEl.textContent = data.ai_response;
+            sessionInfoEl.textContent = `Session ID used: ${data.session_id_used}`;
+        })
+        .catch(error => {
+            console.error('Error executing prompt test:', error);
+            responseAreaEl.textContent = `Error: ${error.message}`;
+            sessionInfoEl.textContent = 'Session ID used: Error occurred';
+        });
+    });
+});
+</script>
+{% endblock %}

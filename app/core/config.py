@@ -4,6 +4,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = "your_openai_api_key_here"
     GEMINI_API_KEY: str = "your_gemini_api_key_here"
     OPENAI_MODEL_NAME: str = "gpt-3.5-turbo-0125"
+    GEMINI_MODEL_NAME: str = "gemini-pro" # Or "gemini-1.5-pro-latest" etc.
     DEBUG_MODE: bool = False
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379

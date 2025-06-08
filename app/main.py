@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session # Added for get_db type hint in ui_home_page
 from app.core.config import settings
 from app.core.database import engine, get_db
 from app import models as app_models
-from app.api import ari_handler, prompts_router, tools_router # Added new routers
+from app.api import ari_handler, prompts_router, tools_router, testing_router # Added testing_router
 from app.core.security import get_current_username
 from app.services.redis_service import get_redis_client
+from app.services.ai_service import PY_MINI_RACER_AVAILABLE, JS_CONTEXT # For JS Processor status
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +55,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir_for_app)), name="stati
 # Include the specific routers for UI sections
 app.include_router(prompts_router.router)
 app.include_router(tools_router.router)
+app.include_router(testing_router.router) # Include the testing router
 
 templates_main = Jinja2Templates(directory=str(APP_BASE_DIR / "templates"))
 
@@ -91,22 +93,39 @@ async def ui_home_page(request: Request, username: str = Depends(get_current_use
     redis_status = "Not Initialized"
     if redis_c:
         try:
-            ping_success = await asyncio.to_thread(redis_c.ping)
+            ping_success = await asyncio.to_thread(redis_c.ping) # Ensure ping is run in a thread for async
             if ping_success:
                  redis_status = "Connected"
             else:
-                 redis_status = "Ping Failed"
+                 redis_status = "Ping Failed" # Or "Disconnected"
         except Exception as e:
             logger.warning(f"Redis ping failed for UI status check: {e}")
-            redis_status = "Connection Failed"
+            redis_status = "Connection Failed" # Or "Disconnected"
+
+    py_mini_racer_status = "No Disponible"
+    if PY_MINI_RACER_AVAILABLE and JS_CONTEXT is not None:
+        py_mini_racer_status = "Disponible"
+    elif PY_MINI_RACER_AVAILABLE and JS_CONTEXT is None: # Indicates an issue during MiniRacer init
+        py_mini_racer_status = "Error de Inicialización"
+    # If PY_MINI_RACER_AVAILABLE is False, it remains "No Disponible"
 
     return templates_main.TemplateResponse("index.html", {
         "request": request,
         "username": username,
         "ari_status": ari_status,
         "default_ai_model": settings.DEFAULT_AI_MODEL,
-        "redis_status": redis_status
+        "redis_status": redis_status,
+        "py_mini_racer_status": py_mini_racer_status,
+        "ASTERISK_APP_NAME": settings.ASTERISK_APP_NAME,
+        "OPENAI_MODEL_NAME": settings.OPENAI_MODEL_NAME,
+        "GEMINI_MODEL_NAME": settings.GEMINI_MODEL_NAME,
+        "DEBUG_MODE": settings.DEBUG_MODE,
     })
+
+@app.get("/ui/test-prompt", name="ui_test_prompt", response_class=HTMLResponse, tags=["Web UI Testing"], include_in_schema=False)
+async def ui_prompt_tester_page(request: Request, username: str = Depends(get_current_username)):
+    """Serves the prompt testing page."""
+    return templates_main.TemplateResponse("testing/test_prompt.html", {"request": request, "username": username})
 
 if __name__ == "__main__":
     import uvicorn

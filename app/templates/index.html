@@ -9,6 +9,15 @@
     <li>ARI Connection: <strong style="color: {{ 'green' if ari_status == 'Connected' else 'red' }}">{{ ari_status }}</strong></li>
     <li>Default AI Model: <strong>{{ default_ai_model }}</strong></li>
     <li>Redis Connection: <strong style="color: {{ 'green' if redis_status == 'Connected' else 'red' }}">{{ redis_status }}</strong></li>
+    <li>JS Processor (py_mini_racer): <strong style="color: {{ 'green' if py_mini_racer_status == 'Disponible' else ('orange' if py_mini_racer_status == 'Error de Inicialización' else 'red') }}">{{ py_mini_racer_status }}</strong></li>
+</ul>
+
+<h3>Configuraciones Clave:</h3>
+<ul>
+    <li>Nombre Aplicación ARI: <strong>{{ ASTERISK_APP_NAME }}</strong></li>
+    <li>Modelo OpenAI por Defecto: <strong>{{ OPENAI_MODEL_NAME }}</strong></li>
+    <li>Modelo Gemini por Defecto: <strong>{{ GEMINI_MODEL_NAME }}</strong></li>
+    <li>Modo Debug: <strong>{{ DEBUG_MODE }}</strong></li>
 </ul>
 
 <h3>Quick Actions:</h3>
