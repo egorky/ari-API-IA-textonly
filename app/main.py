@@ -61,14 +61,26 @@ templates_main = Jinja2Templates(directory=str(APP_BASE_DIR / "templates"))
 
 @app.on_event("startup")
 async def startup_event():
+    """Handles application startup events.
+
+    Currently, this function performs the following actions:
+    - Initializes and starts the Asterisk ARI event listener.
+    - Initializes the Redis client to ensure it's ready for use.
+    """
     logger.info("Application startup: Initializing ARI listener...")
-    ari_handler.start_ari_listener() # Corrected function name from previous subtask's prompt
+    ari_handler.start_ari_listener()
     logger.info("ARI listener task initiated.")
-    get_redis_client()
+    get_redis_client() # Initialize Redis client
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """Handles application shutdown events.
+
+    Currently, this function performs the following actions:
+    - Attempts to gracefully cancel the running ARI client task if it exists
+      and is not already done.
+    """
     logger.info("Application shutdown: Cleaning up resources.")
     if ari_handler.ari_client_task and not ari_handler.ari_client_task.done():
         logger.info("Cancelling ARI client task.")
@@ -80,13 +92,33 @@ async def shutdown_event():
         except Exception as e:
             logger.error(f"Error during ARI task cancellation: {e}")
 
-@app.get("/", tags=["Root"])
+@app.get("/", tags=["Root"], summary="Root Endpoint")
 async def read_root():
+    """Provides a welcome message and links to API docs and UI."""
     return {"message": "Welcome to the Asterisk AI Integration Service. Visit /docs for API documentation or /ui for the web interface."}
 
-@app.get("/ui", name="ui_home", response_class=HTMLResponse, tags=["Web UI Home"], include_in_schema=False)
+@app.get("/ui", name="ui_home", response_class=HTMLResponse, tags=["Web UI"], include_in_schema=False)
 async def ui_home_page(request: Request, username: str = Depends(get_current_username), db: Session = Depends(get_db)):
-    ari_instance = ari_handler.get_ari_client() # Corrected function name
+    """Serves the main dashboard/home page of the Web UI.
+
+    This page displays system status information such as:
+    - ARI connection status.
+    - Redis connection status.
+    - Default AI model configured.
+    - Status of the JavaScript processor (py_mini_racer).
+    - Other key application settings like Asterisk App Name, default model names,
+      and debug mode status.
+
+    Args:
+        request: The FastAPI request object.
+        username: The currently authenticated username (dependency injected).
+        db: Database session dependency (though not directly used in this version
+            for status data, it's available if needed).
+
+    Returns:
+        An HTMLResponse rendering the `index.html` template with context data.
+    """
+    ari_instance = ari_handler.get_ari_client()
     ari_status = "Connected" if ari_instance and hasattr(ari_instance, 'closed') and not ari_instance.closed else "Disconnected"
 
     redis_c = get_redis_client()
@@ -122,9 +154,21 @@ async def ui_home_page(request: Request, username: str = Depends(get_current_use
         "DEBUG_MODE": settings.DEBUG_MODE,
     })
 
-@app.get("/ui/test-prompt", name="ui_test_prompt", response_class=HTMLResponse, tags=["Web UI Testing"], include_in_schema=False)
+@app.get("/ui/test-prompt", name="ui_test_prompt", response_class=HTMLResponse, tags=["Web UI"], include_in_schema=False)
 async def ui_prompt_tester_page(request: Request, username: str = Depends(get_current_username)):
-    """Serves the prompt testing page."""
+    """Serves the HTML page for testing AI prompts.
+
+    This page allows users to select or input custom prompts, provide user input,
+    choose an AI model, and see the AI's response. It interacts with backend APIs
+    defined in `testing_router.py`.
+
+    Args:
+        request: The FastAPI request object.
+        username: The currently authenticated username (dependency injected).
+
+    Returns:
+        An HTMLResponse rendering the `testing/test_prompt.html` template.
+    """
     return templates_main.TemplateResponse("testing/test_prompt.html", {"request": request, "username": username})
 
 if __name__ == "__main__":

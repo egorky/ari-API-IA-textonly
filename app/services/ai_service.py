@@ -50,6 +50,32 @@ DEFAULT_SYSTEM_PROMPT_FOR_AGENT = "You are a helpful assistant. You have access 
 
 # Function to process JavaScript snippets in prompts
 def process_prompt_javascript(prompt_content: str) -> str:
+    """
+    Processes JavaScript snippets embedded in prompt content.
+
+    This function searches for JavaScript code snippets wrapped in double curly
+    braces (e.g., `{{ new Date().getFullYear() }}`) within the provided
+    `prompt_content` string. If `py_mini_racer` is available and initialized,
+    it executes these snippets and replaces them with their string results.
+
+    If `py_mini_racer` is not available, or if `JS_CONTEXT` (the MiniRacer instance)
+    is None, or if the `prompt_content` is empty, the original content is returned
+    unmodified. A warning is logged if snippets are present but `py_mini_racer`
+    is unavailable.
+
+    Errors during the execution of individual JavaScript snippets are caught,
+    logged, and the original snippet is left unprocessed in the content. This
+    prevents a single faulty snippet from breaking the entire prompt processing.
+
+    Args:
+        prompt_content: The string content of the prompt, potentially containing
+                        JavaScript snippets.
+
+    Returns:
+        The prompt content string with JavaScript snippets evaluated and replaced
+        by their results. If JS processing is disabled or an error occurs with
+        a snippet, the original snippet might remain or be handled as per error logic.
+    """
     if not PY_MINI_RACER_AVAILABLE or not prompt_content or not JS_CONTEXT:
         if not PY_MINI_RACER_AVAILABLE and "{{" in prompt_content: # Log only if JS snippets are present but processor is unavailable
              logger.warning("JavaScript snippets found in prompt, but py_mini_racer is not available or failed to initialize. Snippets will not be processed.")
@@ -92,6 +118,34 @@ def process_prompt_javascript(prompt_content: str) -> str:
     return processed_content
 
 def load_langchain_tools_from_db(db: Session) -> List[LangchainTool]:
+    """
+    Loads tool definitions from the database and converts them into LangchainTool objects.
+
+    This function retrieves tool configurations stored in the database via `crud.get_tools`.
+    These configurations include the tool's name, description, a JSON schema
+    defining its expected parameters (`db_tool_data.parameters`), and API
+    configuration details (`db_tool_data.api_config` such as URL, method, headers).
+
+    It then constructs `LangchainTool` objects. Each tool is given an asynchronous
+    coroutine (`specific_tool_coro`) as its callable function. This coroutine,
+    when invoked by a LangChain agent, calls `execute_api_tool` with the
+    tool's specific `api_config`, `parameters_schema`, and the input provided by the agent.
+    A closure is used to ensure that `specific_tool_coro` correctly captures
+    the `name`, `config`, and `schema` for each distinct tool from the loop.
+
+    The `db_tool_data.parameters` field is crucial as it's used by agents (like
+    OpenAI Functions or Gemini with tool binding) to understand how to structure
+    arguments for the tool. The `db_tool_data.api_config` dictates how
+    `execute_api_tool` will make the actual HTTP call.
+
+    Args:
+        db: The SQLAlchemy database session used to fetch tool definitions.
+
+    Returns:
+        A list of `LangchainTool` objects. If no tools are found in the database
+        or if essential configuration like `api_config.url` is missing for a tool,
+        that tool is skipped, and an empty list might be returned.
+    """
     db_tools = crud.get_tools(db=db, limit=100) # Pass db session to crud function
     langchain_tools = []
     for db_tool_data in db_tools:
@@ -146,11 +200,66 @@ def load_langchain_tools_from_db(db: Session) -> List[LangchainTool]:
 async def get_ai_response(
     text_input: str,
     session_id: str,
-    db: Session, # Added db session
-    model_preference: str = None,
-    prompt_name: Optional[str] = None, # Name of the prompt to fetch from DB
-    prompt_content_override: Optional[str] = None # Allow overriding prompt content directly
-):
+    db: Session,
+    model_preference: Optional[str] = None,
+    prompt_name: Optional[str] = None,
+    prompt_content_override: Optional[str] = None,
+) -> str:
+    """
+    Processes a user's text input and returns an AI-generated response.
+
+    This is the core function for interacting with the AI. It orchestrates:
+    1.  Model Selection: Chooses between OpenAI or Gemini based on `model_preference`
+        (e.g., from dialplan), then `settings.DEFAULT_AI_MODEL`, falling back to
+        a hardcoded default if necessary.
+    2.  LLM Initialization: Instantiates the appropriate LangChain LLM client
+        (ChatOpenAI or ChatGoogleGenerativeAI) using API keys and model names
+        from `settings`.
+    3.  Tool Loading: Calls `load_langchain_tools_from_db` to fetch and prepare
+        any tools (API integrations) defined in the database.
+    4.  Memory Setup: Initializes chat message history. It attempts to use
+        `RedisChatMessageHistory` keyed by `session_id` (prefixed with
+        "ari_chat_history:"). If Redis is unavailable, it falls back to
+        `InMemoryChatMessageHistory` for the current interaction.
+    5.  Prompt Processing:
+        a.  Determines the system prompt:
+            - Priority 1: `prompt_content_override` (if provided, e.g., from testing UI).
+            - Priority 2: Content of prompt loaded from DB by `prompt_name` (if provided).
+            - Priority 3: `DEFAULT_SYSTEM_PROMPT_FOR_AGENT`.
+        b.  Calls `process_prompt_javascript` to execute any `{{ }}` JavaScript
+            snippets within the determined prompt content, using `py_mini_racer` if available.
+    6.  Agent Construction:
+        a.  If tools are available and the model is OpenAI, an agent is created
+            using `create_openai_functions_agent` and `AgentExecutor`.
+        b.  If tools are available and the model is Gemini, an agent is created by
+            binding tools to the LLM (`llm.bind_tools()`) and using `AgentExecutor`
+            with `OpenAIFunctionsAgentOutputParser`.
+        c.  If no tools are available or the model is not set up for tools,
+            a simpler `ConversationChain` with memory is used as a fallback.
+    7.  History Management: `RunnableWithMessageHistory` is used to wrap the
+        agent or chain, enabling automatic loading from and saving to the
+        configured message history (Redis or in-memory).
+    8.  Invocation: The agent/chain is invoked with the `text_input` and `session_id`.
+    9.  Response: The AI's final response is returned as a string.
+
+    Args:
+        text_input: The user's input string to the AI.
+        session_id: A unique identifier for the current conversation session,
+            typically the Asterisk channel's UNIQUEID. Used for memory.
+        db: The SQLAlchemy database session, used for loading prompts and tools.
+        model_preference: Optional. The preferred AI model ('openai' or 'gemini').
+            Overrides `settings.DEFAULT_AI_MODEL`.
+        prompt_name: Optional. The name of a pre-defined prompt to load from the
+            database.
+        prompt_content_override: Optional. A string containing the full prompt
+            content, overriding any prompt loaded by `prompt_name` or the default.
+            Primarily used for testing.
+
+    Returns:
+        A string containing the AI's generated response. In case of critical
+        errors (e.g., API key misconfiguration, LLM initialization failure),
+        a descriptive error message string is returned.
+    """
     logger.info(f"AI Service call: session_id='{session_id}', model_preference='{model_preference}', prompt_name='{prompt_name}', override_used={'Yes' if prompt_content_override else 'No'}, input='{text_input[:50]}...'")
 
     chosen_model_name = model_preference if model_preference else settings.DEFAULT_AI_MODEL

@@ -9,12 +9,40 @@ logger = logging.getLogger(__name__)
 async def execute_api_tool(
     api_config: Dict[str, Any],
     parameters_schema: Optional[Dict[str, Any]] = None, # Schema of expected parameters for the tool
-    tool_input: Any = None # Input provided by the LLM, can be a string or dict
+    tool_input: Any = None
 ) -> str:
-    """
-    Executes an API call based on the provided tool configuration and parameters.
-    'parameters_schema' is the schema defined for the tool.
-    'tool_input' is the actual data from the LLM for the tool's arguments.
+    """Executes an API call based on tool configuration and LLM-provided input.
+
+    This function takes the API configuration of a tool (URL, method, headers),
+    the JSON schema defining the tool's expected parameters, and the actual input
+    from the LLM. It validates the input against the schema, then constructs and
+    executes an asynchronous HTTP request using `httpx.AsyncClient`.
+    The response from the external API is processed and returned as a string,
+    suitable for feeding back to the LLM.
+
+    Args:
+        api_config: A dictionary containing the API configuration for the tool.
+            Expected keys:
+            - "url" (str): The target URL for the API call.
+            - "method" (str, optional): The HTTP method (e.g., "GET", "POST").
+              Defaults to "GET".
+            - "headers" (Dict[str, str], optional): HTTP headers for the request.
+            - "name" (str, optional): Name of the tool, used for logging.
+        parameters_schema: An optional dictionary representing the JSON schema
+            against which `tool_input` will be validated. If None, no
+            JSON schema validation is performed (though basic type checks might still occur).
+        tool_input: The input data for the tool, provided by the LLM. This can be
+            a dictionary (if the LLM structures arguments), a JSON string, or a
+            simple scalar value. The function attempts to parse it appropriately
+            before validation and request construction.
+
+    Returns:
+        A string representing the result of the API call.
+        - If successful and the response is JSON, it's a JSON string.
+        - If successful and the response is not JSON, it's the plain text response.
+        - In case of validation errors (jsonschema ValidationError), HTTP errors
+          (4xx/5xx status codes), or connection issues, it returns a
+          descriptive error string prefixed with "Error:".
     """
     url = api_config.get("url")
     method = api_config.get("method", "GET").upper()
