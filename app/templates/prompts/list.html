@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Prompt Management{% endblock %}
+{% block content %}
+<h2>Prompt Management</h2>
+<p><a href="{{ request.app.url_path_for('create_prompt_form') }}" class="button">+ Create New Prompt</a></p>
+{% if prompts %}
+    <ul class="item-list">
+    {% for p in prompts %}
+        <li>
+            <span class="item-name">{{ p.name }}</span>
+            <span class="actions">
+                <a href="{{ request.app.url_path_for('edit_prompt_form', prompt_id=p.id) }}" class="button edit-button">Edit</a>
+                <form action="{{ request.app.url_path_for('delete_prompt_api', prompt_id=p.id) }}" method="POST" style="display: inline;" data-method="DELETE" data-redirect-delete="{{ request.app.url_path_for('list_prompts_ui') }}">
+                    <button type="submit" class="button delete-button">Delete</button>
+                </form>
+            </span>
+        </li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>No prompts found. <a href="{{ request.app.url_path_for('create_prompt_form') }}">Create one?</a></p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env # Loads environment variables from .env file for the app service
+    depends_on:
+      - redis
+    volumes:
+      - ./app:/app/app # Mount local app directory for development hot-reloading (if uvicorn --reload is used inside CMD)
+      # Example for persisting SQLite DB if it's in /app directory in container:
+      # - ./test.db:/app/test.db
+    environment:
+      PYTHONUNBUFFERED: 1 # Recommended for Docker logs to see output immediately
+      # Example overrides or additional variables (can also be in .env):
+      # DATABASE_URL: sqlite:///./test.db
+      REDIS_HOST: redis # Crucial: app service will connect to redis service via this hostname
+      # ASTERISK_ARI_URL: http://host.docker.internal:8088 # For Docker Desktop (Mac/Windows) to reach host
+      # On Linux, if Asterisk is on host, might use --network="host" for app service, or specific IP.
+      # Or, if Asterisk is another container, use its service name.
+
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "127.0.0.1:6379:6379" # Bind to localhost on host to avoid exposing Redis publicly by default
+    volumes:
+      - redis_data:/data
+    # command: redis-server --requirepass yoursecurepassword # Example for password protecting Redis
+
+volumes:
+  redis_data: # Persists Redis data across docker-compose down/up cycles

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Tool/API Management{% endblock %}
+{% block content %}
+<h2>Tool/API Management</h2>
+<p><a href="{{ request.app.url_path_for('create_tool_form') }}" class="button">+ Define New Tool/API</a></p>
+{% if tools %}
+    <ul class="item-list">
+    {% for t in tools %}
+        <li>
+            <span class="item-name">{{ t.name }}</span>
+            <span class="actions">
+                <a href="{{ request.app.url_path_for('edit_tool_form', tool_id=t.id) }}" class="button edit-button">Edit</a>
+                <form action="{{ request.app.url_path_for('delete_tool_api', tool_id=t.id) }}" method="POST" style="display: inline;" data-method="DELETE" data-redirect-delete="{{ request.app.url_path_for('list_tools_ui') }}">
+                    <button type="submit" class="button delete-button">Delete</button>
+                </form>
+            </span>
+        </li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>No tools defined. <a href="{{ request.app.url_path_for('create_tool_form') }}">Define one?</a></p>
+{% endif %}
+{% endblock %}

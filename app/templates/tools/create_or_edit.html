@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if tool else 'Define New' }} Tool/API{% endblock %}
+{% block content %}
+<h2>{{ 'Edit Tool: ' + tool.name if tool else 'Define New Tool/API' }}</h2>
+{% if error %}<p class="error-message">{{ error }}</p>{% endif %}
+<form id="toolForm"
+      action="{{ request.app.url_path_for('create_tool_api') if not tool else request.app.url_path_for('update_tool_api', tool_id=tool.id) }}"
+      method="POST"
+      data-method="{{ 'PUT' if tool else 'POST' }}"
+      data-redirect-success="{{ request.app.url_path_for('list_tools_ui') }}">
+    <div>
+        <label for="name">Tool Name:</label>
+        <input type="text" id="name" name="name" value="{{ tool.name if tool else '' }}" required>
+    </div>
+    <div>
+        <label for="description">Description:</label>
+        <textarea id="description" name="description" rows="3">{{ tool.description if tool and tool.description is not none else '' }}</textarea>
+    </div>
+    <div>
+        <label for="parameters">Parameters (JSON format - OpenAPI schema for parameters):</label>
+        <textarea id="parameters" name="parameters" rows="5">{{ tool.parameters | tojson if tool and tool.parameters is not none else '{}' }}</textarea>
+        <small>Example: {"location": {"type": "string", "description": "City name"}}</small>
+    </div>
+    <div>
+        <label for="api_config">API Configuration (JSON format):</label>
+        <textarea id="api_config" name="api_config" rows="5">{{ tool.api_config | tojson if tool and tool.api_config is not none else '{}' }}</textarea>
+        <small>Example: {"url": "https://api.example.com/weather", "method": "GET", "headers": {"X-API-Key": "YOUR_KEY"}}</small>
+    </div>
+    <div class="form-actions">
+        <button type="submit" class="button">{{ 'Update' if tool else 'Create' }} Tool</button>
+        <a href="{{ request.app.url_path_for('list_tools_ui') }}" class="button cancel-button">Cancel</a>
+    </div>
+</form>
+{% endblock %}

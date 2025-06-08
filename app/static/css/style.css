@@ -1,0 +1,66 @@
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; display: flex; min-height: 100vh; flex-direction: column; background-color: #f8f9fa; color: #343a40; font-size: 16px; line-height: 1.6; }
+header { background-color: #007bff; color: white; padding: 1.5rem 1rem; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+header h1 { margin: 0; font-size: 1.8rem; }
+nav { background-color: #ffffff; padding: 0.75rem 1rem; border-bottom: 1px solid #dee2e6; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+nav ul { list-style-type: none; padding: 0; margin: 0; display: flex; justify-content: center; }
+nav ul li { margin: 0 15px; }
+nav ul li a { text-decoration: none; color: #007bff; font-weight: 500; padding: 0.5em 1em; border-radius: 4px; transition: background-color 0.2s ease, color 0.2s ease; }
+nav ul li a:hover, nav ul li a.active { background-color: #007bff; color: white; }
+.container { padding: 25px; flex-grow: 1; max-width: 960px; margin: 20px auto; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.05); }
+footer { background-color: #343a40; color: #f8f9fa; text-align: center; padding: 1rem; margin-top: auto; font-size: 0.9em; }
+h2 { color: #343a40; border-bottom: 2px solid #007bff; padding-bottom: 0.3em; margin-top:0; }
+form div { margin-bottom: 1rem; }
+label { display: block; margin-bottom: .5rem; font-weight: bold; color: #495057; }
+input[type="text"], input[type="url"], input[type="number"], textarea, select {
+    width: 100%;
+    padding: 0.5rem;
+    box-sizing: border-box;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    font-size: 1rem;
+    transition: border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+}
+input[type="text"]:focus, textarea:focus, select:focus { border-color: #80bdff; outline: 0; box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25); }
+textarea { min-height: 120px; resize: vertical; }
+button[type="submit"], .button {
+    background-color: #007bff;
+    color: white;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 1rem;
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+    transition: background-color 0.2s ease;
+}
+button[type="submit"]:hover, .button:hover { background-color: #0056b3; }
+.button.delete-button { background-color: #dc3545; }
+.button.delete-button:hover { background-color: #c82333; }
+.button.edit-button { background-color: #ffc107; color: #212529; }
+.button.edit-button:hover { background-color: #e0a800; }
+.button.cancel-button { background-color: #6c757d; }
+.button.cancel-button:hover { background-color: #5a6268; }
+small { color: #6c757d; font-size: 0.875em; }
+ul.item-list { list-style-type: none; padding: 0; }
+ul.item-list li {
+    background-color: #f8f9fa;
+    margin-bottom: 10px;
+    padding: 15px;
+    border: 1px solid #e9ecef;
+    border-radius: 0.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+ul.item-list li .item-name { font-weight: bold; flex-grow: 1; margin-right: 10px;}
+ul.item-list li .actions { display: flex; gap: 5px; flex-shrink: 0; }
+ul.item-list li .actions a, ul.item-list li .actions button { margin-left: 0; font-size: 0.9em; padding: 0.3rem 0.6rem;}
+
+.form-actions { margin-top: 20px; }
+.form-actions button, .form-actions a { margin-right: 10px; }
+.back-link { display: inline-block; margin-top: 20px; color: #007bff; text-decoration: none; }
+.back-link:hover { text-decoration: underline; }
+
+.error-message { color: red; font-size: 0.9em; margin-top: 5px; padding: 0.5em; border: 1px solid red; background-color: #ffebeb; border-radius: 4px;}
