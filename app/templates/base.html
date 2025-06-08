@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ARI AI Interface{% endblock %}</title>
+    <link rel="stylesheet" href="{{ request.app.url_path_for('static', path='css/style.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <header>
+        <h1>ARI AI Configuration Interface</h1>
+    </header>
+    <nav>
+        <ul>
+            <li><a href="{{ request.app.url_path_for('ui_home') }}">Home</a></li>
+            <li><a href="{{ request.app.url_path_for('list_prompts_ui') }}">Prompts</a></li>
+            <li><a href="{{ request.app.url_path_for('list_tools_ui') }}">Tools/APIs</a></li>
+        </ul>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        <p>&copy; 2024 AI ARI System</p>
+    </footer>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('form[data-method]').forEach(form => {
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const method = form.dataset.method.toUpperCase();
+                const actionUrl = form.action;
+                let body = null;
+                let headers = { 'Content-Type': 'application/json' };
+
+                if (method === 'DELETE') {
+                    if (!confirm('Are you sure you want to delete this item?')) {
+                        return;
+                    }
+                } else { // For POST and PUT
+                    const formData = new FormData(form);
+                    const data = {};
+                    let jsonError = false;
+                    formData.forEach((value, key) => {
+                        if (key === 'metadata' || key === 'parameters' || key === 'api_config') {
+                            try {
+                                // Allow empty string to be treated as null or empty object by backend if appropriate
+                                if (value.trim() === '') {
+                                    data[key] = null; // Or {} depending on backend expectation for empty
+                                } else {
+                                    data[key] = JSON.parse(value);
+                                }
+                            } catch (e) {
+                                console.warn('Invalid JSON for key:', key, 'value:', value, 'Error:', e);
+                                alert('Invalid JSON format for field: ' + key + '. Please provide valid JSON (e.g., {} or {\"key\":\"value\"}) or leave empty for null.');
+                                jsonError = true;
+                            }
+                        } else {
+                            data[key] = value;
+                        }
+                    });
+                    if (jsonError) return; // Stop submission if JSON parsing failed
+                    body = JSON.stringify(data);
+                }
+
+                try {
+                    const response = await fetch(actionUrl, {
+                        method: method,
+                        headers: headers,
+                        body: (method === 'POST' || method === 'PUT') ? body : null
+                    });
+                    if (response.ok) {
+                         // For DELETE, a 204 No Content is common and has no body
+                        if (method === 'DELETE' && response.status === 204) {
+                             window.location.href = form.dataset.redirectDelete || (window.location.pathname + '?cache_bust=' + new Date().getTime());
+                             return;
+                        }
+                        const redirectUrl = form.dataset.redirectSuccess || (window.location.pathname + '?cache_bust=' + new Date().getTime());
+                        window.location.href = redirectUrl;
+                    } else {
+                        const errorData = await response.json().catch(() => ({ detail: 'Operation failed with status: ' + response.status + '. Check server logs for more details.' }));
+                        alert(`Error: ${response.status} - ${errorData.detail || 'Operation failed.'}`);
+                    }
+                } catch (error) {
+                    console.error('Form submission error:', error);
+                    alert('An error occurred: ' + error.message);
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

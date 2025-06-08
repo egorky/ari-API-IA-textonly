@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - ARI AI Interface{% endblock %}
+{% block content %}
+<h2>Welcome, {{ username }}!</h2>
+<p>This is the main dashboard for the Asterisk AI Integration service.</p>
+<p>Use the navigation above to manage Prompts and Tools/APIs.</p>
+<h3>System Status:</h3>
+<ul>
+    <li>ARI Connection: <strong style="color: {{ 'green' if ari_status == 'Connected' else 'red' }}">{{ ari_status }}</strong></li>
+    <li>Default AI Model: <strong>{{ default_ai_model }}</strong></li>
+    <li>Redis Connection: <strong style="color: {{ 'green' if redis_status == 'Connected' else 'red' }}">{{ redis_status }}</strong></li>
+</ul>
+
+<h3>Quick Actions:</h3>
+<ul>
+    <li><a href="{{ request.app.url_path_for('list_prompts_ui') }}" class="button">Manage Prompts</a></li>
+    <li><a href="{{ request.app.url_path_for('list_tools_ui') }}" class="button">Manage Tools/APIs</a></li>
+</ul>
+{% endblock %}

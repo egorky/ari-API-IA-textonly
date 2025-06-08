@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if prompt else 'Create New' }} Prompt{% endblock %}
+{% block content %}
+<h2>{{ 'Edit Prompt: ' + prompt.name if prompt else 'Create New Prompt' }}</h2>
+{% if error %}
+    <p class="error-message">{{ error }}</p>
+{% endif %}
+<form id="promptForm"
+      action="{{ request.app.url_path_for('create_prompt_api') if not prompt else request.app.url_path_for('update_prompt_api', prompt_id=prompt.id) }}"
+      method="POST"
+      data-method="{{ 'PUT' if prompt else 'POST' }}"
+      data-redirect-success="{{ request.app.url_path_for('list_prompts_ui') }}">
+    <div>
+        <label for="name">Prompt Name:</label>
+        <input type="text" id="name" name="name" value="{{ prompt.name if prompt else '' }}" required>
+    </div>
+    <div>
+        <label for="content">Prompt Content:</label>
+        <textarea id="content" name="content" rows="10" required>{{ prompt.content if prompt else '' }}</textarea>
+    </div>
+    <div>
+        <label for="metadata">Metadata (JSON format):</label>
+        <textarea id="metadata" name="metadata" rows="5">{{ prompt.metadata | tojson if prompt and prompt.metadata is not none else '{}' }}</textarea>
+        <small>Example: {"js_snippet": "console.log(\"hello\");", "version": 1.0}</small>
+    </div>
+    <div class="form-actions">
+        <button type="submit" class="button">{{ 'Update' if prompt else 'Create' }} Prompt</button>
+        <a href="{{ request.app.url_path_for('list_prompts_ui') }}" class="button cancel-button">Cancel</a>
+    </div>
+</form>
+{% endblock %}
